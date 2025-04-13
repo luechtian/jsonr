@@ -1,7 +1,7 @@
 ---
 title: "Advanced JSON Manipulation with jsonr"
 author: "CLU"
-date: "2025-04-13"
+date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{Advanced JSON Manipulation with jsonr}
@@ -415,8 +415,6 @@ jsonlite::toJSON(processed_api_data, pretty = TRUE, auto_unbox = TRUE)
 The `jsonr` package includes several utility functions that are particularly useful for complex JSON manipulation tasks.
 
 ### Comparing JSON Structures
-
-Obwohl `compare_json` nicht direkt exportiert wird, können wir eine vereinfachte Version für dieses Beispiel verwenden:
 
 ```{r}
 # Function to compare two JSON structures
