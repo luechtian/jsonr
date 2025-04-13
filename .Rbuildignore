@@ -20,3 +20,5 @@
 ^\.httr-oauth$
 ^README\.md$
 ^NEWS\.md$
+^doc$
+^Meta$
