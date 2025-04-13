@@ -1,0 +1,48 @@
+{
+  "person": {
+    "name": "Max Mustermann",
+    "age": 30,
+    "email": "max@example.com",
+    "address": {
+      "street": "Hauptstraße 1",
+      "city": "Berlin",
+      "postalCode": "10115"
+    }
+  },
+  "items": [
+    {
+      "id": 1,
+      "name": "Laptop",
+      "price": 999.99,
+      "Test": [
+        {
+          "DisplayName": "Laptop Control Level 1",
+          "Level": 1
+        },
+        {
+          "DisplayName": "Control Level 2",
+          "Level": 2
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Smartphone",
+      "price": 599.99,
+      "Test": [
+        {
+          "DisplayName": "Smartphone Control Level 1",
+          "Level": 1
+        },
+        {
+          "DisplayName": "Control Level 2",
+          "Level": 2
+        }
+      ]
+    }
+  ],
+  "settings": {
+    "darkMode": true,
+    "notifications": false
+  }
+}

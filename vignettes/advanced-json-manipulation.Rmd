@@ -1,0 +1,904 @@
+---
+title: "Advanced JSON Manipulation with jsonr"
+author: "CLU"
+date: "2025-04-13"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Advanced JSON Manipulation with jsonr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(jsonr)
+library(jsonlite)
+```
+
+# Advanced JSON Manipulation with jsonr
+
+This vignette covers advanced usage patterns and techniques for the `jsonr` package, building on the basics introduced in the "Introduction to jsonr" vignette. We'll explore real-world use cases, complex transformations, and integration with other R packages.
+
+## Complex Transformations
+
+### Restructuring Nested JSON
+
+Let's start with a complex transformation scenario. Suppose we have JSON data representing a product catalog with nested properties that we need to restructure:
+
+```{r}
+# Complex catalog JSON
+catalog_json <- '{
+  "products": [
+    {
+      "id": "P001",
+      "name": "Laptop Pro",
+      "details": {
+        "specs": {
+          "cpu": "Intel i7",
+          "ram": "16GB",
+          "storage": "1TB SSD"
+        },
+        "dimensions": {
+          "width": 35.5,
+          "height": 1.8,
+          "depth": 24.7
+        }
+      },
+      "pricing": {
+        "retail": 1299.99,
+        "sale": 1199.99
+      }
+    },
+    {
+      "id": "P002",
+      "name": "Smartphone X",
+      "details": {
+        "specs": {
+          "cpu": "Snapdragon 888",
+          "ram": "8GB",
+          "storage": "256GB"
+        },
+        "dimensions": {
+          "width": 7.1,
+          "height": 0.8,
+          "depth": 15.2
+        }
+      },
+      "pricing": {
+        "retail": 899.99,
+        "sale": 849.99
+      }
+    }
+  ]
+}'
+
+# Parse the catalog
+catalog <- fromJSON(catalog_json, simplifyVector = FALSE)
+```
+
+Now, let's say we want to flatten the specs into the main product objects and add a discount percentage. We can use `jsonr` functions to achieve this:
+
+```{r}
+# First, flatten the specs for each product
+for (i in 1:length(catalog$products)) {
+  product <- catalog$products[[i]]
+  
+  # Add each spec to the product root
+  specs <- product$details$specs
+  for (spec_name in names(specs)) {
+    catalog$products[[i]] <- add_json_element(
+      catalog$products[[i]], 
+      "", 
+      paste0("spec_", spec_name), 
+      specs[[spec_name]]
+    )
+  }
+  
+  # Calculate and add discount percentage
+  retail <- product$pricing$retail
+  sale <- product$pricing$sale
+  discount_pct <- round((retail - sale) / retail * 100, 1)
+  
+  catalog$products[[i]] <- add_json_element(
+    catalog$products[[i]], 
+    "pricing", 
+    "discount_pct", 
+    discount_pct
+  )
+}
+
+# View the transformed catalog
+jsonlite::toJSON(catalog, pretty = TRUE, auto_unbox = TRUE)
+```
+
+### Batch Processing Multiple Arrays
+
+`insert_json_property()` is particularly useful for batch processing of nested arrays. Let's see a more complex example where we need to process multiple levels of arrays:
+
+```{r}
+# Complex nested array structure
+nested_json <- '{
+  "departments": [
+    {
+      "name": "Engineering",
+      "teams": [
+        {
+          "name": "Frontend",
+          "members": [
+            {"id": "E001", "name": "Alice", "role": "Developer"},
+            {"id": "E002", "name": "Bob", "role": "Designer"}
+          ]
+        },
+        {
+          "name": "Backend",
+          "members": [
+            {"id": "E003", "name": "Charlie", "role": "Developer"},
+            {"id": "E004", "name": "David", "role": "Architect"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Marketing",
+      "teams": [
+        {
+          "name": "Social Media",
+          "members": [
+            {"id": "M001", "name": "Eve", "role": "Specialist"},
+            {"id": "M002", "name": "Frank", "role": "Manager"}
+          ]
+        }
+      ]
+    }
+  ]
+}'
+
+# Parse the nested structure
+org_data <- fromJSON(nested_json, simplifyVector = FALSE)
+```
+
+Now, let's add department and team information to each member:
+
+```{r}
+# Add department info to teams
+org_data <- insert_json_property(
+  org_data,
+  array_path = c("departments", "teams"),
+  property_name = "departmentName",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(parent$name)
+  },
+  position_type = "first"
+)
+
+# Add department and team info to members
+org_data <- insert_json_property(
+  org_data,
+  array_path = c("departments", "teams", "members"),
+  property_name = "teamInfo",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(list(
+      department = parent$departmentName,
+      team = parent$name
+    ))
+  },
+  position_type = "after",
+  position_ref = "id"
+)
+
+# View the transformed organization data
+jsonlite::toJSON(org_data, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Integration with Data Processing Workflows
+
+### Preprocessing JSON for Analysis
+
+JSON data often needs preprocessing before analysis. Here's an example of using `jsonr` to prepare JSON data for analysis with `dplyr`:
+
+```{r, eval=FALSE}
+library(dplyr)
+
+# Sample sales data in JSON
+sales_json <- '{
+  "daily_sales": [
+    {
+      "date": "2023-01-01",
+      "transactions": [
+        {"product": "A", "qty": 5, "total": 250.00, "customer": {"type": "retail"}},
+        {"product": "B", "qty": 2, "total": 150.00, "customer": {"type": "wholesale"}},
+        {"product": "C", "qty": 1, "total": 75.00, "customer": {"type": "retail"}}
+      ],
+      "summary": {"total_sales": 475.00, "total_qty": 8}
+    },
+    {
+      "date": "2023-01-02",
+      "transactions": [
+        {"product": "A", "qty": 3, "total": 150.00, "customer": {"type": "retail"}},
+        {"product": "B", "qty": 4, "total": 300.00, "customer": {"type": "retail"}},
+        {"product": "D", "qty": 2, "total": 180.00, "customer": {"type": "wholesale"}}
+      ],
+      "summary": {"total_sales": 630.00, "total_qty": 9}
+    }
+  ]
+}'
+
+sales_data <- fromJSON(sales_json, simplifyVector = FALSE)
+
+# Add customer_type at the root level of each transaction for easier analysis
+processed_data <- insert_json_property(
+  sales_data,
+  array_path = c("daily_sales", "transactions"),
+  property_name = "customer_type",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(elem$customer$type)
+  }
+)
+
+# Calculate average price per unit
+processed_data <- insert_json_property(
+  processed_data,
+  array_path = c("daily_sales", "transactions"),
+  property_name = "avg_price",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(round(elem$total / elem$qty, 2))
+  }
+)
+
+# Convert to a flat data frame for analysis
+transactions <- list()
+for (day_index in 1:length(processed_data$daily_sales)) {
+  day <- processed_data$daily_sales[[day_index]]
+  for (trans_index in 1:length(day$transactions)) {
+    trans <- day$transactions[[trans_index]]
+    trans$date <- day$date
+    transactions <- c(transactions, list(trans))
+  }
+}
+
+# Convert list of transactions to data frame
+transactions_df <- bind_rows(lapply(transactions, as.data.frame))
+
+# Now analyze with dplyr
+transactions_df %>%
+  group_by(date, customer_type) %>%
+  summarize(
+    total_sales = sum(total),
+    total_qty = sum(qty),
+    avg_price = mean(avg_price)
+  )
+```
+
+### Enriching JSON from External Sources
+
+`jsonr` can be used to enrich JSON data with information from external sources:
+
+```{r, eval=FALSE}
+# Sample product data
+products_json <- '{
+  "products": [
+    {"id": "P001", "name": "Laptop", "category": "electronics"},
+    {"id": "P002", "name": "Desk Chair", "category": "furniture"},
+    {"id": "P003", "name": "Coffee Maker", "category": "appliances"}
+  ]
+}'
+
+products_data <- fromJSON(products_json, simplifyVector = FALSE)
+
+# Sample category metadata (from an external source)
+category_metadata <- list(
+  electronics = list(
+    tax_rate = 0.08,
+    warranty_available = TRUE,
+    shipping_category = "fragile"
+  ),
+  furniture = list(
+    tax_rate = 0.06,
+    warranty_available = TRUE,
+    shipping_category = "large"
+  ),
+  appliances = list(
+    tax_rate = 0.07,
+    warranty_available = TRUE,
+    shipping_category = "standard"
+  )
+)
+
+# Enrich product data with category metadata
+enriched_products <- insert_json_property(
+  products_data,
+  array_path = c("products"),
+  property_name = "metadata",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(category_metadata[[elem$category]])
+  }
+)
+
+# View the enriched product data
+jsonlite::toJSON(enriched_products, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Working with Complex JSON Schemas
+
+### Handling API Responses
+
+APIs often return complex JSON structures that need to be transformed before use. Here's an example of processing a hypothetical API response:
+
+```{r, eval=FALSE}
+# Simulated API response with nested paged results
+api_response <- '{
+  "meta": {
+    "status": "success",
+    "timestamp": "2023-06-01T12:00:00Z",
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_pages": 3,
+      "total_items": 25
+    }
+  },
+  "data": {
+    "results": [
+      {
+        "id": "item1",
+        "properties": {
+          "name": "First Item",
+          "active": true,
+          "tags": ["new", "featured"]
+        },
+        "metrics": {
+          "views": 120,
+          "likes": 45
+        }
+      },
+      {
+        "id": "item2",
+        "properties": {
+          "name": "Second Item",
+          "active": false,
+          "tags": ["clearance"]
+        },
+        "metrics": {
+          "views": 80,
+          "likes": 12
+        }
+      }
+    ]
+  }
+}'
+
+api_data <- fromJSON(api_response, simplifyVector = FALSE)
+
+# Flatten the structure and rename fields for consistency
+processed_api_data <- insert_json_property(
+  api_data,
+  array_path = c("data", "results"),
+  property_name = "item_name",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(elem$properties$name)
+  },
+  position_type = "after",
+  position_ref = "id"
+)
+
+processed_api_data <- insert_json_property(
+  processed_api_data,
+  array_path = c("data", "results"),
+  property_name = "engagement_score",
+  property_value = function(elem, index, parent, parent_index, root) {
+    # Calculate an engagement score based on views and likes
+    return(elem$metrics$views + (elem$metrics$likes * 2))
+  }
+)
+
+# Add pagination info to each result for reference
+page_info <- api_data$meta$pagination
+processed_api_data <- insert_json_property(
+  processed_api_data,
+  array_path = c("data", "results"),
+  property_name = "page_info",
+  property_value = page_info
+)
+
+# View the processed data
+jsonlite::toJSON(processed_api_data, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Advanced Utility Functions
+
+The `jsonr` package includes several utility functions that are particularly useful for complex JSON manipulation tasks.
+
+### Comparing JSON Structures
+
+Obwohl `compare_json` nicht direkt exportiert wird, können wir eine vereinfachte Version für dieses Beispiel verwenden:
+
+```{r}
+# Function to compare two JSON structures
+simple_compare_json <- function(json1, json2) {
+  # Convert to character and compare
+  json1_text <- jsonlite::toJSON(json1, auto_unbox = TRUE)
+  json2_text <- jsonlite::toJSON(json2, auto_unbox = TRUE)
+  
+  if (json1_text == json2_text) {
+    return(list())
+  }
+  
+  # Simple comparison of top-level fields
+  differences <- list()
+  all_keys <- unique(c(names(json1), names(json2)))
+  
+  for (key in all_keys) {
+    if (!(key %in% names(json1))) {
+      differences[[key]] <- list(value1 = NULL, value2 = json2[[key]])
+    } else if (!(key %in% names(json2))) {
+      differences[[key]] <- list(value1 = json1[[key]], value2 = NULL)
+    } else if (!identical(json1[[key]], json2[[key]])) {
+      differences[[key]] <- list(value1 = json1[[key]], value2 = json2[[key]])
+    }
+  }
+  
+  return(differences)
+}
+
+# Original JSON
+original <- fromJSON('{"person":{"name":"John","age":30,"city":"New York"}}', simplifyVector = FALSE)
+
+# Modified JSON
+modified <- fromJSON('{"person":{"name":"John","age":35,"country":"USA"}}', simplifyVector = FALSE)
+
+# Compare the structures
+differences <- simple_compare_json(original, modified)
+
+# View the differences
+str(differences)
+```
+
+### Retrieving Nested Values
+
+The `get_nested_value()` function provides a convenient way to access deeply nested values:
+
+```{r}
+# Simple function to get nested values
+get_nested_value_simple <- function(json_data, path, default = NULL) {
+  # Split the path into components
+  path_components <- unlist(strsplit(path, "\\."))
+  
+  # Traverse the JSON structure
+  current <- json_data
+  for (component in path_components) {
+    if (!is.list(current) || !(component %in% names(current))) {
+      return(default)
+    }
+    current <- current[[component]]
+  }
+  
+  return(current)
+}
+
+# Complex nested structure
+nested <- fromJSON('{
+  "level1": {
+    "level2": {
+      "level3": {
+        "value": "deeply nested"
+      }
+    }
+  }
+}', simplifyVector = FALSE)
+
+# Get the nested value
+get_nested_value_simple(nested, "level1.level2.level3.value")
+
+# Provide a default for non-existent paths
+get_nested_value_simple(nested, "level1.level2.missing", default = "not found")
+```
+
+## Best Practices for JSON Manipulation
+
+### Memory Efficiency
+
+When working with large JSON structures, memory usage can become a concern. Here are some tips:
+
+1. **Process incrementally**: For large files, consider reading and processing the JSON in chunks if possible.
+
+2. **Remove unnecessary data**: After extracting what you need, release the original data.
+
+3. **Use references wisely**: When using `insert_json_property()` with functions, be mindful of capturing large data structures in closures.
+
+```{r, eval=FALSE}
+# Memory-efficient processing of a large JSON file
+process_large_json <- function(file_path) {
+  # Read the file as a character string
+  json_str <- readLines(file_path)
+  
+  # Parse and process only what's needed
+  parsed <- fromJSON(json_str, simplifyVector = FALSE)
+  
+  # Extract and process only the relevant parts
+  results <- parsed$results
+  
+  # Clean up to free memory
+  rm(json_str, parsed)
+  gc()
+  
+  # Process the results
+  processed_results <- list()
+  for (i in 1:length(results)) {
+    # Process each item individually
+    processed_item <- process_item(results[[i]])
+    processed_results[[i]] <- processed_item
+  }
+  
+  return(processed_results)
+}
+```
+
+### Handling Error Cases
+
+Robust JSON processing should include error handling:
+
+```{r, eval=FALSE}
+# Safe JSON processing with error handling
+safe_add_element <- function(json_data, path, name, value) {
+  tryCatch({
+    result <- add_json_element(json_data, path, name, value)
+    return(list(success = TRUE, data = result, error = NULL))
+  }, error = function(e) {
+    return(list(success = FALSE, data = NULL, error = e$message))
+  })
+}
+
+# Example usage
+result <- safe_add_element(data, "non.existent.path", "test", "value")
+if (result$success) {
+  # Process the result
+  processed_data <- result$data
+} else {
+  # Handle the error
+  message("Error processing JSON: ", result$error)
+  # Use fallback or default behavior
+}
+```
+
+### Validation and Testing
+
+Always validate your JSON transformations, especially for complex structures:
+
+```{r, eval=FALSE}
+# Validate that a required field exists after transformation
+validate_transformation <- function(transformed_data, required_paths) {
+  missing_paths <- c()
+  
+  for (path in required_paths) {
+    value <- get_nested_value(transformed_data, path)
+    if (is.null(value)) {
+      missing_paths <- c(missing_paths, path)
+    }
+  }
+  
+  if (length(missing_paths) > 0) {
+    warning("Validation failed: The following paths are missing: ", 
+            paste(missing_paths, collapse = ", "))
+    return(FALSE)
+  }
+  
+  return(TRUE)
+}
+
+  # Example usage
+required_paths <- c("person.name", "person.email", "person.address.city")
+is_valid <- validate_transformation(transformed_data, required_paths)
+if (!is_valid) {
+  # Handle invalid data
+  message("Data validation failed, using fallback process")
+}
+```
+
+## Practical Use Cases
+
+### Schema Migration
+
+When you need to migrate data from one schema version to another, `jsonr` functions can be particularly useful:
+
+```{r, eval=FALSE}
+# Function to migrate from schema v1 to v2
+migrate_schema_v1_to_v2 <- function(v1_data) {
+  # Deep clone the data to avoid modifying the original
+  v2_data <- fromJSON(toJSON(v1_data, auto_unbox = TRUE), simplifyVector = FALSE)
+  
+  # 1. Rename fields
+  if ("items" %in% names(v2_data)) {
+    # Process each item
+    for (i in 1:length(v2_data$items)) {
+      # Schema v2 renames "price" to "unit_price"
+      if ("price" %in% names(v2_data$items[[i]])) {
+        price_value <- v2_data$items[[i]]$price
+        v2_data$items[[i]] <- add_json_element(
+          v2_data$items[[i]], "", "unit_price", price_value
+        )
+        # Remove the old field (in v2 we would need to handle this differently)
+        v2_data$items[[i]]$price <- NULL
+      }
+      
+      # 2. Change structure: Move "category" into a "metadata" object
+      if ("category" %in% names(v2_data$items[[i]])) {
+        category_value <- v2_data$items[[i]]$category
+        # Create metadata object if it doesn't exist
+        if (!("metadata" %in% names(v2_data$items[[i]]))) {
+          v2_data$items[[i]] <- add_json_element(
+            v2_data$items[[i]], "", "metadata", list()
+          )
+        }
+        # Add category to metadata
+        v2_data$items[[i]] <- add_json_element(
+          v2_data$items[[i]], "metadata", "category", category_value
+        )
+        # Remove old field
+        v2_data$items[[i]]$category <- NULL
+      }
+    }
+  }
+  
+  # 3. Add new required fields with default values
+  v2_data <- add_json_element(v2_data, "", "schema_version", "v2")
+  v2_data <- add_json_element(v2_data, "", "migrated_at", format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ"))
+  
+  return(v2_data)
+}
+
+# Example usage
+v1_data <- fromJSON('{
+  "items": [
+    {"id": "item1", "name": "Product 1", "price": 29.99, "category": "electronics"},
+    {"id": "item2", "name": "Product 2", "price": 49.99, "category": "accessories"}
+  ]
+}', simplifyVector = FALSE)
+
+v2_data <- migrate_schema_v1_to_v2(v1_data)
+jsonlite::toJSON(v2_data, pretty = TRUE, auto_unbox = TRUE)
+```
+
+### Configuration Management
+
+`jsonr` can be used to manage and update configuration files:
+
+```{r, eval=FALSE}
+# Update a configuration file with new settings
+update_config <- function(config_file, settings) {
+  # Read the current config
+  config <- jsonlite::fromJSON(config_file, simplifyVector = FALSE)
+  
+  # Update settings
+  for (section in names(settings)) {
+    if (!(section %in% names(config))) {
+      # Add new section
+      config <- add_json_element(config, "", section, list())
+    }
+    
+    # Update settings in the section
+    for (setting_name in names(settings[[section]])) {
+      setting_value <- settings[[section]][[setting_name]]
+      config <- add_json_element(config, section, setting_name, setting_value)
+    }
+  }
+  
+  # Write the updated config back to the file
+  write(jsonlite::toJSON(config, pretty = TRUE, auto_unbox = TRUE), config_file)
+  
+  return(config)
+}
+
+# Example usage
+new_settings <- list(
+  database = list(
+    connection_timeout = 30,
+    max_connections = 100
+  ),
+  logging = list(
+    level = "debug",
+    file = "app.log"
+  )
+)
+
+# Update the config file
+updated_config <- update_config("config.json", new_settings)
+```
+
+## Performance Considerations
+
+### Optimizing for Speed
+
+For performance-critical applications, consider these optimization techniques:
+
+1. **Minimize JSON parsing/serialization**: Parse the JSON once, make all modifications, then serialize once.
+
+2. **Use vectorized operations**: Where possible, process multiple elements at once instead of one by one.
+
+3. **Pre-compile path components**: For repeated operations, split path components once and reuse.
+
+```{r, eval=FALSE}
+# Performance optimized batch processing
+optimized_batch_process <- function(json_data, paths, values) {
+  # Pre-process all paths
+  split_paths <- lapply(paths, function(p) unlist(strsplit(p, "\\.")))
+  
+  # Process all modifications in one pass
+  for (i in seq_along(paths)) {
+    json_data <- add_json_element(
+      json_data, 
+      paths[i], 
+      names(values)[i], 
+      values[[i]]
+    )
+  }
+  
+  return(json_data)
+}
+```
+
+### Memory Profiling
+
+For large-scale JSON processing, monitor memory usage:
+
+```{r, eval=FALSE}
+library(profmem)
+
+# Profile memory usage during processing
+prof <- profmem({
+  result <- process_large_json(large_file)
+})
+
+# View memory allocation summary
+total_allocations <- sum(prof$bytes[prof$bytes > 0])
+cat("Total memory allocated:", format(total_allocations, units = "auto"), "\n")
+```
+
+## Integration with Other Packages
+
+### Working with dplyr and tidyr
+
+The `jsonr` package works well with the tidyverse ecosystem:
+
+```{r, eval=FALSE}
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+# Convert complex JSON to a tidy data frame
+json_to_tidy_df <- function(json_data, array_path) {
+  # Extract the array
+  current <- json_data
+  path_components <- unlist(strsplit(array_path, "\\."))
+  
+  for (component in path_components) {
+    if (!(component %in% names(current))) {
+      stop("Path component '", component, "' not found")
+    }
+    current <- current[[component]]
+  }
+  
+  # Convert to data frame
+  df <- purrr::map_df(current, function(item) {
+    # Flatten nested lists to column names with dot notation
+    flatten_list <- function(x, prefix = "") {
+      result <- list()
+      
+      for (name in names(x)) {
+        full_name <- if (prefix == "") name else paste0(prefix, ".", name)
+        
+        if (is.list(x[[name]]) && !is.null(names(x[[name]]))) {
+          # Recursively flatten nested lists
+          nested <- flatten_list(x[[name]], full_name)
+          result <- c(result, nested)
+        } else {
+          result[[full_name]] <- x[[name]]
+        }
+      }
+      
+      return(result)
+    }
+    
+    as.data.frame(flatten_list(item))
+  })
+  
+  return(df)
+}
+
+# Example usage
+products_json <- '{
+  "products": [
+    {"id": "P001", "name": "Laptop", "details": {"price": 999.99, "stock": 42}},
+    {"id": "P002", "name": "Phone", "details": {"price": 699.99, "stock": 120}}
+  ]
+}'
+
+products_data <- fromJSON(products_json, simplifyVector = FALSE)
+products_df <- json_to_tidy_df(products_data, "products")
+
+# Now you can use dplyr operations
+products_df %>%
+  filter(details.price < 800) %>%
+  mutate(total_value = details.price * details.stock)
+```
+
+### Integration with Web APIs
+
+`jsonr` can be used to process API responses:
+
+```{r, eval=FALSE}
+library(httr)
+
+# Function to fetch and process API data
+fetch_and_process_api <- function(api_url, transformation_fn = NULL) {
+  # Make the API request
+  response <- GET(api_url)
+  
+  # Check for successful response
+  if (http_status(response)$category != "Success") {
+    stop("API request failed: ", http_status(response)$message)
+  }
+  
+  # Parse the JSON response
+  json_data <- fromJSON(content(response, "text"), simplifyVector = FALSE)
+  
+  # Apply the transformation function if provided
+  if (!is.null(transformation_fn)) {
+    json_data <- transformation_fn(json_data)
+  }
+  
+  return(json_data)
+}
+
+# Example transformation function
+normalize_api_response <- function(json_data) {
+  # Check if the response has the expected structure
+  if (!all(c("data", "meta") %in% names(json_data))) {
+    warning("Unexpected API response structure")
+    return(json_data)
+  }
+  
+  # Add a timestamp to each data item
+  if ("items" %in% names(json_data$data)) {
+    timestamp <- json_data$meta$timestamp
+    
+    result <- insert_json_property(
+      json_data,
+      array_path = c("data", "items"),
+      property_name = "fetch_time",
+      property_value = timestamp
+    )
+    
+    return(result)
+  }
+  
+  return(json_data)
+}
+
+# Example usage
+api_data <- fetch_and_process_api(
+  "https://api.example.com/data",
+  normalize_api_response
+)
+```
+
+## Conclusion
+
+The `jsonr` package provides powerful tools for complex JSON manipulation in R. By combining the core functions `add_json_element()` and `insert_json_property()` with the utility functions, you can handle a wide range of JSON processing tasks efficiently.
+
+Key takeaways from this vignette:
+
+1. `jsonr` excels at batch processing and complex transformations of nested JSON structures.
+
+2. The package integrates well with the tidyverse ecosystem and other R packages.
+
+3. Advanced features like dynamic property values and positioning allow for fine-grained control over JSON structure.
+
+4. Best practices include validation, error handling, and performance optimization for large datasets.
+
+With these techniques, you can efficiently process even the most complex JSON data structures in your R workflows.

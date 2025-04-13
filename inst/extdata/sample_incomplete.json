@@ -1,0 +1,25 @@
+{
+  "person": {
+    "name": "Max Mustermann",
+    "age": 30,
+    "address": {
+      "street": "Hauptstraße 1",
+      "city": "Berlin",
+      "postalCode": "10115"
+    }
+  },
+  "items": [
+    {
+      "id": 1,
+      "name": "Laptop"
+    },
+    {
+      "id": 2,
+      "name": "Smartphone"
+    }
+  ],
+  "settings": {
+    "darkMode": true,
+    "notifications": false
+  }
+}

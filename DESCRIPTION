@@ -1,0 +1,30 @@
+Package: jsonr
+Type: Package
+Title: Advanced JSON Manipulation Tools for R
+Version: 0.1.0
+Date: 2025-04-13
+Authors@R: 
+    person("Christian", "Luechtenborg", email = "christian.luechtenborg@gmail.com", role = c("aut", "cre"))
+Description: Advanced tools for manipulating JSON data in R. The package provides 
+    functions for adding elements to specific paths in JSON objects, inserting 
+    properties into nested array elements, and other JSON manipulation tasks. 
+    It offers a more flexible and powerful approach to working with complex 
+    JSON structures than what is available in base packages.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: 
+    jsonlite (>= 1.8.0),
+    methods,
+    utils
+Suggests: 
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    covr
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+URL: https://github.com/luechtian/jsonr
+BugReports: https://github.com/luechtian/jsonr/issues

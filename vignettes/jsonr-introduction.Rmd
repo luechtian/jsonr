@@ -1,0 +1,264 @@
+---
+title: "Introduction to jsonr"
+author: "CLU"
+date: "2025-04-13"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to jsonr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(jsonr)
+library(jsonlite)
+```
+
+# Introduction
+
+The `jsonr` package provides advanced tools for manipulating JSON data in R. While the `jsonlite` package offers excellent functionality for converting between JSON and R data structures, `jsonr` extends these capabilities with specialized functions for more complex JSON manipulation tasks:
+
+1. **Adding elements to specific paths** in JSON objects using dot notation
+2. **Inserting properties into nested array elements** with fine-grained control over positioning
+3. **Utility functions** for validating, comparing, and formatting JSON data
+
+This vignette provides an introduction to the main functionality of the `jsonr` package.
+
+## Why jsonr?
+
+Working with complex, nested JSON structures can be challenging, especially when:
+
+- You need to add or modify elements at specific paths
+- You need to insert properties in array elements at specific positions
+- You need to process nested arrays with dynamic values
+
+The `jsonr` package provides specialized functions to handle these tasks efficiently and intuitively.
+
+# Basic JSON Manipulation with add_json_element()
+
+The `add_json_element()` function allows you to add an element to a specific path in a JSON object or file. The path is specified using dot notation, making it easy to target nested structures.
+
+## Adding an Element to a Simple JSON Object
+
+Let's start with a simple example:
+
+```{r}
+# Create a simple JSON object
+json_data <- fromJSON('{"person": {"name": "John Doe", "age": 30}}', simplifyVector = FALSE)
+
+# Add an email element to the person object
+result <- add_json_element(json_data, "person", "email", "john@example.com")
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Adding an Element to the Root Level
+
+To add an element at the root level, use an empty string as the path:
+
+```{r}
+# Add a status element to the root level
+result <- add_json_element(json_data, "", "status", "active")
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Adding an Element to a Nested Path
+
+You can add elements to deeper paths using dot notation:
+
+```{r}
+# Add an address element with nested structure
+address <- list(street = "123 Main St", city = "New York", zip = "10001")
+result <- add_json_element(json_data, "person", "address", address)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Creating Missing Path Components
+
+By default, the function will throw an error if a path component doesn't exist. However, you can set `create_path = TRUE` to create missing components:
+
+```{r}
+# Try to add a phone number to a non-existent contact structure
+result <- add_json_element(json_data, "person.contact.phone", "mobile", "+1234567890", create_path = TRUE)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+If you don't set `create_path = TRUE` and the path doesn't exist, you'll get an error:
+
+```{r, error=TRUE}
+# This will fail because the path doesn't exist
+add_json_element(json_data, "person.contact.phone", "mobile", "+1234567890")
+```
+
+## Controlling Element Position
+
+You can control the position of the new element within its parent structure:
+
+```{r}
+# Add an element at the beginning (position = 1)
+result <- add_json_element(json_data, "person", "id", 123, position = 1)
+
+# View the result (note that "id" is now the first element in "person")
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Working with JSON Files
+
+The `add_json_element()` function can also work directly with JSON files:
+
+```{r, eval=FALSE}
+# Add an element to a JSON file
+add_json_element("data.json", "settings", "language", "en")
+
+# Specify a different output file to avoid overwriting the original
+add_json_element("data.json", "settings", "theme", "dark", output_file_path = "output.json")
+```
+
+# Manipulating Nested Arrays with insert_json_property()
+
+The `insert_json_property()` function is designed for more complex scenarios where you need to insert properties into elements of nested arrays.
+
+## Basic Usage
+
+Let's start with a simple example:
+
+```{r}
+# Complex JSON with nested arrays
+json_str <- '{
+  "items": [
+    {
+      "id": 1,
+      "name": "Laptop",
+      "tests": [
+        {"name": "Performance", "score": 85},
+        {"name": "Battery", "score": 90}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Smartphone",
+      "tests": [
+        {"name": "Performance", "score": 80},
+        {"name": "Battery", "score": 75}
+      ]
+    }
+  ]
+}'
+
+# Parse the JSON
+complex_data <- fromJSON(json_str, simplifyVector = FALSE)
+
+# Insert a "passed" property into all test elements
+result <- insert_json_property(
+  complex_data,
+  array_path = c("items", "tests"),
+  property_name = "passed",
+  property_value = TRUE,
+  position_type = "last"  # Use "last" as a safe default
+)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Controlling Property Position
+
+You can control the position of the new property within each element:
+
+```{r}
+# Insert a property at the beginning of each element
+result <- insert_json_property(
+  complex_data,
+  array_path = c("items", "tests"),
+  property_name = "testId",
+  property_value = 1,
+  position_type = "first"
+)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+
+# Insert a property after a specific property
+result <- insert_json_property(
+  complex_data,
+  array_path = c("items", "tests"),
+  property_name = "testId",
+  property_value = 1,
+  position_type = "after",
+  position_ref = "name"
+)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Dynamic Property Values
+
+One of the most powerful features of `insert_json_property()` is the ability to use a function to dynamically generate property values based on context:
+
+```{r}
+# Insert a property with a dynamic value based on the parent element
+result <- insert_json_property(
+  complex_data,
+  array_path = c("items", "tests"),
+  property_name = "itemName",
+  property_value = function(elem, index, parent, parent_index, root) {
+    return(parent$name)  # Use the name of the parent item
+  },
+  position_type = "last"  # Use "last" as the position_type
+)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+## Filtering Elements
+
+You can also use a filter function to selectively apply the property to certain elements:
+
+```{r}
+# Insert a property only for test elements with a score >= 80
+result <- insert_json_property(
+  complex_data,
+  array_path = c("items", "tests"),
+  property_name = "excellent",
+  property_value = TRUE,
+  position_type = "last",  # Use "last" as the position_type
+  filter_fn = function(elem) {
+    return(elem$score >= 80)
+  }
+)
+
+# View the result
+jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
+```
+
+# Conclusion
+
+The `jsonr` package provides powerful tools for manipulating JSON data in R, complementing the existing functionality in packages like `jsonlite`. 
+
+Key features include:
+
+- **Path-based element addition** with `add_json_element()`
+- **Nested array manipulation** with `insert_json_property()`
+- **Fine-grained control** over element and property positioning
+- **Dynamic property values** based on context
+- **Selective modification** with filtering
+
+These capabilities make `jsonr` a valuable tool for working with complex JSON structures in R.
+
+For more advanced usage examples, see the "Advanced JSON Manipulation" vignette.
