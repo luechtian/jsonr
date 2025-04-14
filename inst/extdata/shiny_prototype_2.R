@@ -4,6 +4,7 @@ library(jsonlite)
 library(shinyAce)
 library(DT)
 library(jsonr)
+library(shinyjs)
 
 # ============================================
 # Helper functions for rule storage
@@ -238,6 +239,7 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Transform", tabName = "transform", icon = icon("exchange-alt")),
+      menuItem("Batch Processing", tabName = "batch", icon = icon("cubes")),
       menuItem("Rule Management", tabName = "rules", icon = icon("tasks")),
       menuItem("Logs", tabName = "logs", icon = icon("history"))
     )
@@ -285,7 +287,7 @@ ui <- dashboardPage(
                 box(
                   title = "Input JSON",
                   width = 6,
-                  height = 500,
+                  height = 510,
                   aceEditor("inputJson", mode = "json", theme = "chrome", height = "400px",
                             value = '{\n  "Upload a JSON file or use the sample dataset"\n}')
                 ),
@@ -293,7 +295,7 @@ ui <- dashboardPage(
                 box(
                   title = "Output JSON",
                   width = 6,
-                  height = 500,
+                  height = 510,
                   aceEditor("outputJson", mode = "json", theme = "chrome", height = "400px",
                             readOnly = TRUE),
                   div(style = "margin-top: 10px",
@@ -301,6 +303,76 @@ ui <- dashboardPage(
                       actionButton("copyBtn", "Copy to Clipboard"),
                       actionButton("clearOutputBtn", "Clear Output")
                   )
+                )
+              )
+      ),
+      
+      # Batch Processing Tab
+      tabItem(tabName = "batch",
+              fluidRow(
+                box(
+                  title = "Batch Process Settings",
+                  width = 4,
+                  # Select a rule to apply
+                  selectInput("batchRule", "Select Rule to Apply:", choices = c("None" = "none")),
+                  
+                  # Input directory
+                  textInput("sourceDirPath", "Source Directory:", 
+                            value = ifelse(.Platform$OS.type == "windows", "C:/path/to/json/files", "~/path/to/json/files")),
+                  actionButton("browseSourceDir", "Browse..."),
+                  
+                  # Output directory
+                  textInput("outputDirPath", "Output Directory:", 
+                            value = ifelse(.Platform$OS.type == "windows", "C:/path/to/output", "~/path/to/output")),
+                  actionButton("browseOutputDir", "Browse..."),
+                  
+                  # Options
+                  checkboxInput("overwriteExisting", "Overwrite Existing Files", value = TRUE),
+                  checkboxInput("preserveStructure", "Preserve Directory Structure", value = TRUE),
+                  checkboxInput("recursiveSearch", "Include Subdirectories", value = TRUE),
+                  
+                  # File pattern (for filtering JSON files)
+                  textInput("filePattern", "File Pattern:", value = "*.json"),
+                  
+                  # Execute button
+                  br(),
+                  actionButton("executeBatchBtn", "Execute Batch Processing", class = "btn-primary")
+                ),
+                
+                # Preview box
+                box(
+                  title = "Files to Process",
+                  width = 8,
+                  DT::dataTableOutput("filesToProcess"),
+                  textOutput("fileCount")
+                )
+              ),
+              
+              # Results and progress
+              fluidRow(
+                box(
+                  title = "Processing Progress",
+                  width = 12,
+                  hidden(div(id = "progressSection",
+                             uiOutput("progressText"),
+                             div(
+                               class = "progress",
+                               div(
+                                 id = "batchProgressBar",
+                                 class = "progress-bar",
+                                 role = "progressbar",
+                                 style = "width: 0%;",
+                                 "0%"
+                               )
+                             ),
+                             br(),
+                             verbatimTextOutput("currentFileProcessing")
+                  )),
+                  hidden(div(id = "resultsSection",
+                             h4("Processing Results"),
+                             DT::dataTableOutput("processingResults"),
+                             downloadButton("downloadResultsBtn", "Download Results CSV")
+                  ))
                 )
               )
       ),
@@ -380,6 +452,509 @@ server <- function(input, output, session) {
   backup_file_to_download <- reactiveVal(NULL)
   restore_source_dir <- reactiveVal(NULL)
   
+  # Initialize file lists
+  batch_files <- reactiveVal(NULL)
+  processing_results <- reactiveVal(NULL)
+  
+  # Helper function to list JSON files in a directory
+  listJsonFiles <- function(dir_path, pattern = "*.json", recursive = TRUE) {
+    if (!dir.exists(dir_path)) {
+      return(data.frame())
+    }
+    
+    # List files matching the pattern
+    files <- list.files(
+      path = dir_path,
+      pattern = pattern,
+      recursive = recursive,
+      full.names = TRUE
+    )
+    
+    # Create a data frame with file information
+    if (length(files) > 0) {
+      file_info <- file.info(files)
+      
+      result <- data.frame(
+        FilePath = files,
+        FileName = basename(files),
+        FileSize = file_info$size,
+        LastModified = file_info$mtime,
+        stringsAsFactors = FALSE
+      )
+      
+      return(result)
+    } else {
+      return(data.frame())
+    }
+  }
+  
+  # Update the batch rule dropdown with saved rules
+  observe({
+    saved_rules <- rules()
+    
+    if (length(saved_rules) > 0) {
+      rule_names <- sapply(saved_rules, function(r) r$name)
+      rule_ids <- sapply(saved_rules, function(r) r$id)
+      
+      choices <- c("None" = "none")
+      for (i in seq_along(rule_names)) {
+        choices[rule_names[i]] <- rule_ids[i]
+      }
+      
+      updateSelectInput(session, "batchRule", choices = choices)
+    }
+  })
+  
+  # Browse source directory button
+  observeEvent(input$browseSourceDir, {
+    # This would use shinyFiles in a real application
+    # For the prototype, we'll just simulate directory selection
+    showModal(modalDialog(
+      title = "Select Source Directory",
+      "In a production app, this would open a directory browser. For this prototype, please enter the directory path manually.",
+      easyClose = TRUE
+    ))
+  })
+  
+  # Browse output directory button
+  observeEvent(input$browseOutputDir, {
+    # This would use shinyFiles in a real application
+    showModal(modalDialog(
+      title = "Select Output Directory",
+      "In a production app, this would open a directory browser. For this prototype, please enter the directory path manually.",
+      easyClose = TRUE
+    ))
+  })
+  
+  # Update file list when source directory or options change
+  observeEvent(list(input$sourceDirPath, input$recursiveSearch, input$filePattern), {
+    # Only proceed if the source directory is valid
+    if (!is.null(input$sourceDirPath) && nzchar(input$sourceDirPath) && dir.exists(input$sourceDirPath)) {
+      # List all JSON files in the source directory
+      files_df <- listJsonFiles(
+        dir_path = input$sourceDirPath,
+        pattern = input$filePattern,
+        recursive = input$recursiveSearch
+      )
+      
+      # Update the reactive value
+      batch_files(files_df)
+      
+      # Display a notification with the count
+      if (nrow(files_df) > 0) {
+        showNotification(paste("Found", nrow(files_df), "JSON files."), type = "message")
+      } else {
+        showNotification("No matching JSON files found in the directory.", type = "warning")
+      }
+    } else {
+      batch_files(data.frame())
+    }
+  })
+  
+  # Display the list of files to be processed
+  output$filesToProcess <- DT::renderDataTable({
+    files_df <- batch_files()
+    
+    if (!is.null(files_df) && nrow(files_df) > 0) {
+      # Format file size
+      files_df$FileSize <- format(files_df$FileSize / 1024, digits = 2)
+      
+      # Return a datatable with selected columns
+      DT::datatable(
+        files_df[, c("FileName", "FileSize", "LastModified")],
+        colnames = c("File Name", "Size (KB)", "Last Modified"),
+        options = list(pageLength = 10)
+      )
+    } else {
+      # Return an empty table if no files
+      DT::datatable(
+        data.frame(Message = "No JSON files found. Please select a valid source directory."),
+        options = list(dom = 't')
+      )
+    }
+  })
+  
+  # Display the count of files to be processed
+  output$fileCount <- renderText({
+    files_df <- batch_files()
+    
+    if (!is.null(files_df) && nrow(files_df) > 0) {
+      paste(nrow(files_df), "files found in the source directory.")
+    } else {
+      "No files found. Please select a valid source directory."
+    }
+  })
+  
+  # Execute batch processing button
+  observeEvent(input$executeBatchBtn, {
+    # Validate inputs
+    validate <- TRUE
+    validate_message <- ""
+    
+    # Check if a rule is selected
+    if (input$batchRule == "none") {
+      validate <- FALSE
+      validate_message <- "Please select a rule to apply."
+    }
+    
+    # Check source directory
+    if (!dir.exists(input$sourceDirPath)) {
+      validate <- FALSE
+      validate_message <- "Source directory does not exist."
+    }
+    
+    # Check if there are files to process
+    files_df <- batch_files()
+    if (is.null(files_df) || nrow(files_df) == 0) {
+      validate <- FALSE
+      validate_message <- "No files to process."
+    }
+    
+    # Check if output directory exists or can be created
+    output_dir <- input$outputDirPath
+    if (!dir.exists(output_dir)) {
+      tryCatch({
+        dir.create(output_dir, recursive = TRUE)
+      }, error = function(e) {
+        validate <- FALSE
+        validate_message <- paste("Cannot create output directory:", e$message)
+      })
+    }
+    
+    if (!validate) {
+      showNotification(validate_message, type = "error")
+      return()
+    }
+    
+    # Show progress UI
+    shinyjs::show("progressSection")
+    shinyjs::hide("resultsSection")
+    
+    # Get the selected rule
+    rule_id <- input$batchRule
+    selected_rule <- loadRuleById(rule_id, rule_storage_dir)
+    
+    if (is.null(selected_rule)) {
+      showNotification("Error: Selected rule could not be loaded.", type = "error")
+      return()
+    }
+    
+    # Parse rule content
+    rule_content <- selected_rule$content
+    
+    # Initialize results table
+    results <- data.frame(
+      FileName = character(),
+      Status = character(),
+      Message = character(),
+      ProcessingTime = numeric(),
+      stringsAsFactors = FALSE
+    )
+    
+    # Process files asynchronously (simulated here with a loop)
+    withProgress(message = 'Processing files', value = 0, {
+      total_files <- nrow(files_df)
+      
+      for (i in 1:total_files) {
+        # Get current file
+        file_path <- files_df$FilePath[i]
+        file_name <- files_df$FileName[i]
+        
+        # Update progress
+        incProgress(1/total_files, detail = paste("Processing", file_name))
+        
+        # Update progress UI
+        progress_pct <- (i / total_files) * 100
+        # Update the progress bar via JavaScript
+        session$sendCustomMessage(type = "jsCode", 
+                                  message = sprintf(
+                                    "$('#batchProgressBar').css('width', '%s%%').attr('aria-valuenow', %s).text('%s%%');",
+                                    progress_pct, progress_pct, round(progress_pct)
+                                  ))
+        
+        output$progressText <- renderUI({
+          h4(paste("Processing file", i, "of", total_files))
+        })
+        output$currentFileProcessing <- renderText({
+          paste("Current file:", file_name)
+        })
+        
+        # Determine output file path
+        if (input$preserveStructure) {
+          # Preserve directory structure relative to the source directory
+          rel_path <- sub(normalizePath(input$sourceDirPath), "", normalizePath(dirname(file_path)))
+          if (startsWith(rel_path, "/") || startsWith(rel_path, "\\")) {
+            rel_path <- substring(rel_path, 2)
+          }
+          output_subdir <- file.path(output_dir, rel_path)
+          
+          # Create subdirectory if it doesn't exist
+          if (!dir.exists(output_subdir)) {
+            dir.create(output_subdir, recursive = TRUE)
+          }
+          
+          output_file_path <- file.path(output_subdir, file_name)
+        } else {
+          # Just put all files in the output directory
+          output_file_path <- file.path(output_dir, file_name)
+        }
+        
+        # Check if output file exists and overwrite option
+        if (file.exists(output_file_path) && !input$overwriteExisting) {
+          # Skip this file
+          results <- rbind(results, data.frame(
+            FileName = file_name,
+            Status = "Skipped",
+            Message = "Output file already exists",
+            ProcessingTime = 0,
+            stringsAsFactors = FALSE
+          ))
+          next
+        }
+        
+        # Process the file
+        tryCatch({
+          # Read the JSON file
+          start_time <- Sys.time()
+          
+          # Read and parse input JSON
+          json_content <- readLines(file_path, warn = FALSE)
+          json_content <- paste(json_content, collapse = "\n")
+          input_json <- fromJSON(json_content, simplifyVector = FALSE)
+          
+          # Parse transformation rules
+          transform_rules <- fromJSON(rule_content, simplifyVector = FALSE)
+          
+          # Apply rules sequentially
+          output_json <- input_json
+          
+          for (rule_index in seq_along(transform_rules)) {
+            rule <- transform_rules[[rule_index]]
+            
+            # Call the appropriate function based on rule operation
+            if (rule$operation == "add_element") {
+              # Handle function value
+              value <- rule$value
+              if (is.list(value) && "_function_" %in% names(value)) {
+                func_code <- value[["_function_"]]
+                
+                # Create a safe environment for function evaluation
+                safe_env <- new.env(parent = baseenv())
+                
+                # Add necessary global functions
+                safe_env$Sys.time <- Sys.time
+                safe_env$paste <- paste
+                safe_env$paste0 <- paste0
+                safe_env$round <- round
+                
+                # Add context variables
+                safe_env$root <- input_json
+                
+                # Evaluate the function
+                tryCatch({
+                  result <- eval(parse(text = func_code), envir = safe_env)
+                  value <- result
+                }, error = function(e) {
+                  # Log error
+                  value <- NULL
+                })
+              }
+              
+              # Add the element
+              path <- rule$path
+              name <- rule$name
+              position <- if ("position" %in% names(rule)) rule$position else NULL
+              
+              output_json <- add_json_element(
+                output_json, 
+                path, 
+                name, 
+                value, 
+                position = position,
+                create_path = TRUE
+              )
+            } 
+            else if (rule$operation == "insert_property") {
+              # Extract parameters
+              array_path_input <- rule$array_path
+              array_path <- NULL
+              
+              if (is.character(array_path_input)) {
+                # Case 1: String with dots
+                if (length(array_path_input) == 1) {
+                  array_path <- unlist(strsplit(array_path_input, "\\."))
+                } 
+                # Case 2: Already a character vector
+                else {
+                  array_path <- array_path_input
+                }
+              } 
+              # Case 3: JSON array was loaded as a list
+              else if (is.list(array_path_input)) {
+                array_path <- as.character(unlist(array_path_input))
+              }
+              
+              property_name <- rule$property_name
+              property_value <- rule$property_value
+              position_type <- if("position_type" %in% names(rule)) rule$position_type else "last"
+              position_ref <- if ("position_ref" %in% names(rule)) rule$position_ref else NULL
+              
+              # Handle function value
+              if (is.list(property_value) && "_function_" %in% names(property_value)) {
+                func_code <- property_value[["_function_"]]
+                
+                # Create a function for property_value
+                property_value <- function(elem, index, parent, parent_index, root, ...) {
+                  # Create a safe environment for evaluation
+                  safe_env <- new.env(parent = baseenv())
+                  
+                  # Add necessary global functions
+                  safe_env$paste <- paste
+                  safe_env$paste0 <- paste0
+                  safe_env$round <- round
+                  safe_env$names <- names
+                  safe_env$length <- length
+                  
+                  # Add context variables to the environment
+                  safe_env$elem <- elem
+                  safe_env$index <- index
+                  safe_env$parent <- parent
+                  safe_env$parent_index <- parent_index
+                  safe_env$root <- root
+                  
+                  # Evaluate the function body in this environment
+                  result <- NULL
+                  tryCatch({
+                    result <- eval(parse(text = func_code), envir = safe_env)
+                  }, error = function(e) {
+                    result <- paste("Error:", e$message) # Fallback value
+                  })
+                  
+                  return(result)
+                }
+              }
+              
+              # Apply the transformation
+              result <- insert_json_property(
+                json_data = output_json,
+                array_path = array_path,
+                property_name = property_name,
+                property_value = property_value,
+                position_type = position_type,
+                position_ref = position_ref,
+                filter_fn = NULL,
+                verbose = FALSE
+              )
+              
+              if (!is.null(result)) {
+                output_json <- result
+              }
+            }
+            # Add other rule operations as needed...
+          }
+          
+          # Format and write the output
+          output_json_str <- if (input$prettyOutput) {
+            toJSON(output_json, pretty = TRUE, auto_unbox = TRUE)
+          } else {
+            toJSON(output_json, auto_unbox = TRUE)
+          }
+          
+          writeLines(output_json_str, output_file_path)
+          
+          # Calculate processing time
+          end_time <- Sys.time()
+          proc_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+          
+          # Add to results
+          results <- rbind(results, data.frame(
+            FileName = file_name,
+            Status = "Success",
+            Message = "Transformation completed",
+            ProcessingTime = round(proc_time, 2),
+            stringsAsFactors = FALSE
+          ))
+          
+        }, error = function(e) {
+          # Handle processing error
+          results <- rbind(results, data.frame(
+            FileName = file_name,
+            Status = "Error",
+            Message = e$message,
+            ProcessingTime = 0,
+            stringsAsFactors = FALSE
+          ))
+        })
+        
+        # Allow the UI to update
+        Sys.sleep(0.1)
+      }
+    })
+    
+    # Update results table
+    processing_results(results)
+    
+    # Hide progress and show results
+    shinyjs::hide("progressSection")
+    shinyjs::show("resultsSection")
+    
+    # Log completion
+    addLog(paste("Batch processing completed:", nrow(results), "files processed."))
+    
+    # Show notification
+    success_count <- sum(results$Status == "Success")
+    error_count <- sum(results$Status == "Error")
+    skipped_count <- sum(results$Status == "Skipped")
+    
+    showNotification(
+      paste("Batch processing completed:", 
+            success_count, "successful,", 
+            error_count, "errors,", 
+            skipped_count, "skipped."),
+      type = "message"
+    )
+  })
+  
+  # Display processing results
+  output$processingResults <- DT::renderDataTable({
+    results <- processing_results()
+    
+    if (!is.null(results) && nrow(results) > 0) {
+      # Color-code the Status column
+      results$Status <- factor(results$Status, levels = c("Success", "Error", "Skipped"))
+      
+      DT::datatable(results, 
+                    options = list(pageLength = 15),
+                    rownames = FALSE) %>%
+        DT::formatStyle(
+          'Status',
+          backgroundColor = DT::styleEqual(
+            c('Success', 'Error', 'Skipped'), 
+            c('#d4edda', '#f8d7da', '#fff3cd')
+          ),
+          color = DT::styleEqual(
+            c('Success', 'Error', 'Skipped'), 
+            c('#155724', '#721c24', '#856404')
+          )
+        )
+    } else {
+      DT::datatable(
+        data.frame(Message = "No processing results available."),
+        options = list(dom = 't')
+      )
+    }
+  })
+  
+  # Download results as CSV
+  output$downloadResultsBtn <- downloadHandler(
+    filename = function() {
+      paste0("batch_processing_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+    },
+    content = function(file) {
+      results <- processing_results()
+      write.csv(results, file, row.names = FALSE)
+    }
+  )
   # Initialize the rule storage directory
   rule_storage_dir <- setupRuleStorage()
   
